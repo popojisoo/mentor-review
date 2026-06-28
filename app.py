@@ -11,7 +11,7 @@ DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = BASE_DIR / "uploads"
 PROBLEMS_CSV = DATA_DIR / "problems.csv"
 REVIEWS_CSV = DATA_DIR / "reviews.csv"
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1226")
 
 PROBLEM_COLUMNS = ["problem_id", "unit", "comment", "image_path", "created_at"]
 REVIEW_COLUMNS = [
