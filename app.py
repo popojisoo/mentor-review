@@ -1,117 +1,23 @@
 import os
-from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-# ── 경로 및 설정 ──────────────────────────────────────────────
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
-UPLOADS_DIR = BASE_DIR / "uploads"
-PROBLEMS_CSV = DATA_DIR / "problems.csv"
-REVIEWS_CSV = DATA_DIR / "reviews.csv"
+from storage import (
+    init_storage,
+    load_problems,
+    load_reviews,
+    resolve_image,
+    save_problem,
+    save_review,
+    has_duplicate_review,
+    storage_mode_label,
+    use_cloud_storage,
+)
+
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1226")
 
-PROBLEM_COLUMNS = ["problem_id", "unit", "comment", "image_path", "created_at"]
-REVIEW_COLUMNS = [
-    "review_id",
-    "problem_id",
-    "student_name",
-    "completed",
-    "reflection",
-    "submitted_at",
-]
 
-
-def init_storage():
-    """data·uploads 폴더와 CSV 파일을 없으면 생성한다."""
-    DATA_DIR.mkdir(exist_ok=True)
-    UPLOADS_DIR.mkdir(exist_ok=True)
-    if not PROBLEMS_CSV.exists():
-        pd.DataFrame(columns=PROBLEM_COLUMNS).to_csv(
-            PROBLEMS_CSV, index=False, encoding="utf-8-sig"
-        )
-    if not REVIEWS_CSV.exists():
-        pd.DataFrame(columns=REVIEW_COLUMNS).to_csv(
-            REVIEWS_CSV, index=False, encoding="utf-8-sig"
-        )
-
-
-def load_problems() -> pd.DataFrame:
-    df = pd.read_csv(PROBLEMS_CSV, encoding="utf-8-sig")
-    if df.empty:
-        return df
-    df["problem_id"] = df["problem_id"].astype(int)
-    return df.sort_values("problem_id", ascending=False).reset_index(drop=True)
-
-
-def load_reviews() -> pd.DataFrame:
-    df = pd.read_csv(REVIEWS_CSV, encoding="utf-8-sig")
-    if df.empty:
-        return df
-    df["problem_id"] = df["problem_id"].astype(int)
-    return df
-
-
-def save_problem(unit: str, comment: str, image_bytes: bytes, image_name: str):
-    df = load_problems()
-    next_id = int(df["problem_id"].max()) + 1 if not df.empty else 1
-
-    ext = Path(image_name).suffix or ".jpg"
-    filename = f"problem_{next_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
-    image_path = UPLOADS_DIR / filename
-    image_path.write_bytes(image_bytes)
-
-    new_row = pd.DataFrame(
-        [
-            {
-                "problem_id": next_id,
-                "unit": unit.strip(),
-                "comment": comment.strip(),
-                "image_path": str(image_path.relative_to(BASE_DIR)),
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        ]
-    )
-    pd.concat([df, new_row], ignore_index=True).to_csv(
-        PROBLEMS_CSV, index=False, encoding="utf-8-sig"
-    )
-    return next_id
-
-
-def save_review(problem_id: int, student_name: str, completed: str, reflection: str):
-    df = load_reviews()
-    next_id = int(df["review_id"].max()) + 1 if not df.empty else 1
-
-    new_row = pd.DataFrame(
-        [
-            {
-                "review_id": next_id,
-                "problem_id": problem_id,
-                "student_name": student_name.strip(),
-                "completed": completed,
-                "reflection": reflection.strip(),
-                "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        ]
-    )
-    pd.concat([df, new_row], ignore_index=True).to_csv(
-        REVIEWS_CSV, index=False, encoding="utf-8-sig"
-    )
-
-
-def has_duplicate_review(problem_id: int, student_name: str) -> bool:
-    df = load_reviews()
-    if df.empty:
-        return False
-    mask = (df["problem_id"] == problem_id) & (
-        df["student_name"].str.strip() == student_name.strip()
-    )
-    return mask.any()
-
-
-# ── 화면 ──────────────────────────────────────────────────────
 def show_student_view():
     problems = load_problems()
 
@@ -149,9 +55,9 @@ def show_student_view():
     st.divider()
     st.subheader(f"문제 #{row['problem_id']} · {row['unit']}")
 
-    image_full_path = BASE_DIR / row["image_path"]
-    if image_full_path.exists():
-        st.image(str(image_full_path), use_container_width=True)
+    image_src = resolve_image(row["image_path"])
+    if image_src:
+        st.image(image_src, use_container_width=True)
     else:
         st.warning("문제 사진을 찾을 수 없습니다.")
 
@@ -180,6 +86,12 @@ def show_student_view():
 
 def show_admin_view():
     st.subheader("문제 업로드")
+
+    if not use_cloud_storage():
+        st.warning(
+            "지금은 **임시 저장** 모드입니다. Streamlit Cloud에서는 데이터가 사라질 수 있습니다. "
+            "아래 설정을 완료하면 Google에 영구 저장됩니다."
+        )
 
     if not st.session_state.get("admin_authenticated"):
         password = st.text_input("관리자 비밀번호", type="password")
@@ -210,8 +122,11 @@ def show_admin_view():
         elif image_file is None:
             st.error("문제 사진을 업로드해 주세요.")
         else:
-            problem_id = save_problem(unit, comment, image_file.getvalue(), image_file.name)
-            st.success(f"문제 #{problem_id}가 업로드되었습니다!")
+            try:
+                problem_id = save_problem(unit, comment, image_file.getvalue(), image_file.name)
+                st.success(f"문제 #{problem_id}가 저장되었습니다!")
+            except Exception as e:
+                st.error(f"저장 중 오류가 발생했습니다: {e}")
 
     st.divider()
     st.subheader("문제별 복습 현황")
@@ -266,6 +181,7 @@ def main():
     init_storage()
 
     st.title("학급 멘토멘티 복습 기록장")
+    st.sidebar.caption(f"저장 방식: **{storage_mode_label()}**")
 
     page = st.sidebar.radio("화면 선택", ["학생용 화면", "관리자 화면"])
 
