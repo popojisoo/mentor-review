@@ -1,0 +1,8 @@
+# 학생 제출 데이터·업로드 사진은 GitHub에 올리지 않음
+data/
+uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+.env
